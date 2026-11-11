@@ -13,6 +13,7 @@ let targetFile = "/Library/Application Support/Scale/target"
 let plistPath = "/Library/LaunchDaemons/com.scale.daemon.plist"
 let helperPath = "/Library/PrivilegedHelperTools/com.scale.daemon"  // root 소유 복사본 (사용자 쓰기 불가)
 let interval: TimeInterval = 10  // 확인 주기(초)
+let probeDelay: TimeInterval = 2  // 어댑터 재연결 후 IOPS 반영 대기(초). 실기기에서 "빠짐" 오판하면 늘릴 것
 
 // MARK: - SMC (raw 80바이트 SMCKeyData_t, 오프셋 직접 접근)
 
@@ -139,12 +140,17 @@ func daemon() {
 
     Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
         guard let pct = batteryPercent() else { return }
-        let a = decide(pct: pct, target: readTarget())
+        var a = decide(pct: pct, target: readTarget())
+        // CHIE=08이면 꽂혀 있어도 "빠짐"으로 보고될 때가 있음 → 잠깐 어댑터를 켜서 실제로 확인.
+        // 진짜 빠져 있으면 방전 모드 해제(어차피 배터리 구동, 잠자기 차단 안 함 = 가방 속 과열 방지).
+        if !a.adapter && !adapterPlugged() {
+            smc.setAdapter(true); Thread.sleep(forTimeInterval: probeDelay)
+            if !adapterPlugged() { a.adapter = true }
+        }
         // 매번 씀: 잠자기/깨어남 후 펌웨어가 값을 리셋해도 다시 맞춤
         smc.setCharging(a.charge); smc.setAdapter(a.adapter)
         // 크림쉘(뚜껑 닫힘)에서 배터리 구동 = 잠자기 → 방전 중에만 잠자기 차단.
-        // 어댑터가 실제로 빠져 있으면 차단 안 함(가방 속 과열 방지).
-        let wantNoSleep = !a.adapter && adapterPlugged()
+        let wantNoSleep = !a.adapter
         if wantNoSleep != noSleep {
             run("/usr/bin/pmset", "-a", "disablesleep", wantNoSleep ? "1" : "0")
             noSleep = wantNoSleep
