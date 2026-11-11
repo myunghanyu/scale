@@ -121,7 +121,7 @@ struct PixelCanvas: View {
             for y in 0..<pix.h { for x in 0..<pix.w where pix.on[y * pix.w + x] {
                 p.addRect(CGRect(x: CGFloat(x) * px, y: CGFloat(y) * px, width: px, height: px))
             } }
-            c.fill(p, with: .foreground)
+            c.fill(p, with: .color(.primary))
         }
         .frame(width: CGFloat(pix.w) * px, height: CGFloat(pix.h) * px)
     }
@@ -180,7 +180,6 @@ struct Panel: View {
         }
         .buttonStyle(.plain)
         .font(.system(size: 11, weight: .bold, design: .monospaced))
-        .foregroundStyle(.primary)
         .padding(16)
         .frame(width: 308)
         .onAppear(perform: model.refresh)
