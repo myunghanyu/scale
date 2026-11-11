@@ -175,7 +175,7 @@ struct Panel: View {
                 Button(model.installed ? "[UNINSTALL]" : "[INSTALL]") {
                     model.privileged(model.installed ? "uninstall" : "install")
                 }
-                Button("[QUIT]") { NSApp.terminate(nil) }
+                Button("[QUIT]") { try? writeTarget(100); NSApp.terminate(nil) }  // 앱 종료 = 제한 해제
             }
         }
         .buttonStyle(.plain)
