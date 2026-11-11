@@ -9,9 +9,10 @@ Set a goal (e.g. 80%):
 
 ## Install
 
-1. Download `Scale.zip` from [Releases](../../releases), unzip, move `Scale.app` to `/Applications`.
-2. The app is not notarized, so clear the quarantine flag once:
+1. Download `Scale.zip` from the **Assets** of the [latest release](../../releases/latest) — not the green `Code → Download ZIP` (that's source only, no app inside).
+2. Unzip, then move `Scale.app` to `/Applications` and clear the quarantine flag (the app is not notarized):
    ```sh
+   mv ~/Downloads/Scale.app /Applications/
    xattr -dr com.apple.quarantine /Applications/Scale.app
    ```
 3. Open it → click the scale icon in the menu bar → `[INSTALL]` (admin password).
