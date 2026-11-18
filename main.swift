@@ -8,6 +8,7 @@
 import Foundation
 import IOKit
 import IOKit.ps
+import notify
 
 let targetFile = "/Library/Application Support/Scale/target"
 let plistPath = "/Library/LaunchDaemons/com.scale.daemon.plist"
@@ -60,8 +61,11 @@ final class SMC {
     // 펌웨어별 키: 신형(macOS 15+) CHTE/CHIE, 구형 CH0B·CH0C/CH0I
     func setCharging(_ on: Bool) {
         if has("CHTE") { write("CHTE", on ? [0, 0, 0, 0] : [1, 0, 0, 0]) }
-        else { write("CH0B", [on ? 0 : 2]); write("CH0C", [on ? 0 : 2]) }
+        else if has("CH0B") { write("CH0B", [on ? 0 : 2]); write("CH0C", [on ? 0 : 2]) }
+        // macOS 27+ 펌웨어: 둘 다 없음 → nativeLimit()로 처리
     }
+
+    var hasChargeKeys: Bool { has("CHTE") || has("CH0B") }
 
     func setAdapter(_ on: Bool) {  // off = 어댑터 꽂혀 있어도 배터리로 구동(방전)
         if has("CHIE") { write("CHIE", [on ? 0 : 8]) }
@@ -120,14 +124,34 @@ func run(_ path: String, _ args: String...) {
     try? p.run(); p.waitUntilExit()
 }
 
+// macOS 27+ 펌웨어엔 충전 차단 SMC 키(CHTE/CH0B)가 없음 → macOS 자체 충전 제한(설정 > 배터리 > 충전 제한)을
+// 목표치로 맞춤. PowerUIAgent(root)의 도메인이라 root에서만 동작. 펌웨어가 잠자기 중에도 유지.
+let mclDomain = "com.apple.smartcharging.topoffprotection" as CFString
+
+func nativeLimit(_ t: Int) {
+    func get(_ k: String) -> Int? {
+        CFPreferencesCopyValue(k as CFString, mclDomain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? Int
+    }
+    func set(_ k: String, _ v: Int) {
+        CFPreferencesSetValue(k as CFString, v as CFNumber, mclDomain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+    }
+    let state = t < 100 ? 1 : 0, limit = t < 100 ? t : 100
+    if get("MCLFeatureState") == state && get("mclLimitValue") == limit { return }  // 설정 앱에서 바꿔도 다시 맞춤
+    set("MCLFeatureState", state); set("mclLimitValue", limit)
+    CFPreferencesSynchronize(mclDomain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+    notify_post("com.apple.smartcharging.defaultschanged")  // PowerUIAgent가 다시 읽음 (~1분 내 적용)
+}
+
 // MARK: - 데몬
 
 func daemon() {
     guard let smc = SMC() else { fatalError("cannot open AppleSMC") }
     var noSleep = false
+    let native = !smc.hasChargeKeys
 
     func restore() {
         smc.setCharging(true); smc.setAdapter(true)
+        if native { nativeLimit(100) }
         if noSleep { run("/usr/bin/pmset", "-a", "disablesleep", "0") }
         exit(0)
     }
@@ -140,7 +164,9 @@ func daemon() {
 
     Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
         guard let pct = batteryPercent() else { return }
-        var a = decide(pct: pct, target: readTarget())
+        let target = readTarget()
+        if native { nativeLimit(target) }
+        var a = decide(pct: pct, target: target)
         // CHIE=08이면 꽂혀 있어도 "빠짐"으로 보고될 때가 있음 → 잠깐 어댑터를 켜서 실제로 확인.
         // 진짜 빠져 있으면 방전 모드 해제(어차피 배터리 구동, 잠자기 차단 안 함 = 가방 속 과열 방지).
         if !a.adapter && !adapterPlugged() {

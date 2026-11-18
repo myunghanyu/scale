@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 APP=build/Scale.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-swiftc -O main.swift App.swift -o "$APP/Contents/MacOS/Scale"
+swiftc -O -target arm64-apple-macos14.0 main.swift App.swift -o "$APP/Contents/MacOS/Scale"
 
 # icon: icon.swift → 1024 png → iconset → icns
 SET=build/AppIcon.iconset

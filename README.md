@@ -35,5 +35,8 @@ scale 80     # set goal (100 = no limit)
 ## Notes
 
 - Uses SMC keys `CHTE`/`CHIE` (macOS 15+ firmware) or `CH0B`/`CH0C`/`CH0I` (older).
+  macOS 27 firmware has no `CHTE`; the daemon instead sets macOS's own charge limit
+  (`com.apple.smartcharging.topoffprotection`) to the goal, and still drains via `CHIE`.
+- `[UPDATE]` in the menu installs the latest GitHub release (admin prompt).
 - The macOS battery icon keeps showing the plug/charging icon while the adapter is connected; check real current with
   `ioreg -rn AppleSmartBattery | grep InstantAmperage` (huge number = negative = draining).

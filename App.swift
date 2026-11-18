@@ -42,6 +42,60 @@ final class Model: ObservableObject {
         refresh()
     }
 
+    // MARK: 온라인 업데이트: GitHub 최신 릴리스의 Scale.zip → 앱 교체 + (설치돼 있으면) 데몬 갱신 → 재실행
+    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+    @Published var updating: String?
+
+    func update() {
+        updating = "CHECKING..."; error = nil
+        Task { @MainActor in
+            do {
+                let api = URL(string: "https://api.github.com/repos/myunghanyu/scale/releases/latest")!
+                let rel = try JSONSerialization.jsonObject(with: try await URLSession.shared.data(from: api).0) as? [String: Any]
+                guard let tag = rel?["tag_name"] as? String,
+                      let zip = (rel?["assets"] as? [[String: Any]])?.first(where: { $0["name"] as? String == "Scale.zip" }),
+                      let url = (zip["browser_download_url"] as? String).flatMap(URL.init) else { throw URLError(.badServerResponse) }
+                let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+                guard Self.version.compare(latest, options: .numeric) == .orderedAscending else {
+                    updating = nil; error = "UP TO DATE (v\(Self.version))"; return
+                }
+                updating = "DOWNLOADING v\(latest)..."
+                let (file, _) = try await URLSession.shared.download(from: url)
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                p.arguments = ["-x", "-k", file.path, dir.path]
+                try p.run(); p.waitUntilExit()
+                guard p.terminationStatus == 0 else { throw URLError(.cannotDecodeContentData) }
+                install(from: dir.appendingPathComponent("Scale.app").path)
+            } catch {
+                updating = nil; self.error = "UPDATE FAILED: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func install(from new: String) {
+        let app = Bundle.main.bundlePath
+        func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        var sh = "rm -rf \(q(app)) && ditto \(q(new)) \(q(app)) && xattr -dr com.apple.quarantine \(q(app))"
+        if installed { sh += " && \(q(app + "/Contents/MacOS/Scale")) install" }  // root 데몬 바이너리도 교체, 목표값 유지
+        let esc = sh.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        var err: NSDictionary?
+        NSAppleScript(source: "do shell script \"\(esc)\" with administrator privileges")?.executeAndReturnError(&err)
+        updating = nil
+        if let err {
+            if err[NSAppleScript.errorNumber] as? Int != -128 { error = err[NSAppleScript.errorMessage] as? String }
+            return
+        }
+        // 새 버전 실행 후 종료 (QUIT과 달리 목표값은 유지)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "sleep 1; open \(q(app))"]
+        try? p.run()
+        NSApp.terminate(nil)
+    }
+
     var launchAtLogin: Bool {
         get { SMAppService.mainApp.status == .enabled }
         set {
@@ -167,6 +221,7 @@ struct Panel: View {
             }
 
             if let e = model.error { Text("! " + e.uppercased()) }
+            if let u = model.updating { Text("> " + u) }
 
             PixelCanvas(pix: dashes)
             HStack {
@@ -176,6 +231,11 @@ struct Panel: View {
                     model.privileged(model.installed ? "uninstall" : "install")
                 }
                 Button("[QUIT]") { try? writeTarget(100); NSApp.terminate(nil) }  // 앱 종료 = 제한 해제
+            }
+            HStack {
+                Text("V\(Model.version)").foregroundStyle(.secondary)
+                Spacer()
+                Button("[UPDATE]") { model.update() }.disabled(model.updating != nil)
             }
         }
         .buttonStyle(.plain)
